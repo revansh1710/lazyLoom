@@ -5,17 +5,15 @@ function smoothstep(min, max, value) {
     return x * x * (3 - 2 * x);
 }
 
-// --- The Unseen (Normalized Phantom Nodes) ---
 class PhantomNode {
     constructor() {
-        this.nx = Math.random(); // Normalized X (0-1)
-        this.ny = Math.random(); // Normalized Y (0-1)
+        this.nx = Math.random();
+        this.ny = Math.random(); 
         this.warmth = 0;
         this.seedX = Math.random() * 100;
         this.seedY = Math.random() * 100;
     }
     update(t) {
-        // Drift softly within normalized space
         const targetNX = 0.5 + Math.sin(t * 0.02 + this.seedX) * 0.4;
         const targetNY = 0.5 + Math.cos(t * 0.015 + this.seedY) * 0.3;
 
@@ -25,17 +23,15 @@ class PhantomNode {
     }
 }
 
-// --- The Yielding Environment ---
 class Mote {
     constructor() {
         this.nx = Math.random();
         this.ny = 1.0 + Math.random() * 0.5;
         this.seed = Math.random() * 100;
         this.sizeBase = Math.random() * 2.5 + 1.0;
-        this.speedBase = Math.random() * 0.001 + 0.0005; // Normalized speed
+        this.speedBase = Math.random() * 0.001 + 0.0005; 
     }
     update(t, loomNX, loomNY, phantoms, aspectRatio) {
-        // Calculate distance in normalized space (adjusted for aspect ratio to keep gravity circular)
         const dx = (this.nx - loomNX) * aspectRatio;
         const dy = (this.ny - loomNY);
         const dLoom = Math.sqrt(dx * dx + dy * dy);
@@ -66,7 +62,7 @@ class Mote {
     draw(ctx, w, h, scale, presence) {
         const px = this.nx * w;
         const py = this.ny * h;
-        const pSize = this.sizeBase * (scale * 0.8); // Scale particles slightly, but keep them delicate
+        const pSize = this.sizeBase * (scale * 0.8); 
 
         ctx.beginPath();
         ctx.arc(px, py, pSize, 0, Math.PI * 2);
@@ -75,7 +71,6 @@ class Mote {
     }
 }
 
-// --- The Character Engine ---
 class LoomPresence {
     constructor() {
         this.canvas = document.getElementById('loom-canvas');
@@ -86,12 +81,10 @@ class LoomPresence {
         this.lastFrameTime = performance.now();
         this.lastInteractionTime = performance.now();
 
-        // Input tracking
         this.inputActive = false;
         this.inputNX = 0.5;
         this.inputNY = 0.5;
 
-        // Continuous state
         this.presence = 0;
         this.eyeOpenness = 0;
         this.gazeOffset = { x: 0, y: 0 };
@@ -102,7 +95,7 @@ class LoomPresence {
         this.handleResize();
         window.addEventListener('resize', this.handleResize.bind(this));
 
-        // Universal pointer events (Mouse + Touch)
+
         window.addEventListener('pointermove', this.handlePointer.bind(this));
         window.addEventListener('pointerdown', this.handlePointer.bind(this));
         window.addEventListener('pointerup', () => this.inputActive = false);
@@ -118,19 +111,17 @@ class LoomPresence {
         this.canvas.height = this.h;
         this.aspectRatio = this.w / this.h;
 
-        // Scale factor: Base size is ~500px short-edge.
-        // On mobile, this makes Loom large and intimate. On desktop, it stabilizes.
         this.scale = Math.min(this.w, this.h) / 500;
 
-        // Dynamic Ecology: Calculate desired mote density based on screen area
+
         const area = this.w * this.h;
         const targetMotes = Math.max(15, Math.min(80, Math.floor(area / 15000)));
 
-        // Softly grow or cull the ecosystem
+ 
         if (this.motes.length < targetMotes) {
             while (this.motes.length < targetMotes) this.motes.push(new Mote());
         } else if (this.motes.length > targetMotes) {
-            this.motes.splice(targetMotes); // Instantly culling is okay off-screen, or we let them die. Simple cull for performance.
+            this.motes.splice(targetMotes); 
         }
     }
 
@@ -145,7 +136,7 @@ class LoomPresence {
         this.presence = lerp(this.presence, idleDuration > 5 ? 1.0 : 0.0, idleDuration > 5 ? 0.002 : 0.05);
         this.phantoms.forEach(p => p.update(this.time));
 
-        // Shared Breathing Field
+
         const doubt = Math.pow(Math.max(0, smoothNoise(this.time * 0.3)), 2) * (1 - this.presence * 0.8);
         let breathSpeed = lerp(1.5, 0.6, this.presence);
         const syncWindow = Math.pow(smoothNoise(this.time * 0.04), 4);
@@ -157,14 +148,13 @@ class LoomPresence {
 
         this.breathPhase += deltaTime * breathSpeed * (1 - doubt * 0.9);
 
-        // Emotional Recognition & Barycentric Attention
         const curiosity = Math.pow((Math.sin(this.time * 0.1) + Math.sin(this.time * 0.17)) * 0.5, 4);
         const stillnessSafety = smoothstep(8, 20, idleDuration);
         const awareness = curiosity * stillnessSafety * this.presence;
         this.eyeOpenness = lerp(this.eyeOpenness, Math.max(0, (awareness - 0.1) * 5), 0.02);
 
         if (this.eyeOpenness > 0.05) {
-            let totalWeight = this.inputActive ? 1.0 : 0.1; // User gravity fades if no touch/cursor
+            let totalWeight = this.inputActive ? 1.0 : 0.1;
             let weightedNX = this.inputNX * totalWeight;
             let weightedNY = this.inputNY * totalWeight;
 
@@ -178,7 +168,7 @@ class LoomPresence {
             const targetNX = weightedNX / totalWeight;
             const targetNY = weightedNY / totalWeight;
 
-            // Convert normalized target back to localized offsets for the eye
+
             const targetGazeX = (targetNX - 0.5) * 40 * this.scale;
             const targetGazeY = (targetNY - 0.5) * 40 * this.scale;
             const shyOffsetX = smoothNoise(this.time * 0.5) * 8 * this.scale;
@@ -196,11 +186,9 @@ class LoomPresence {
         const h = this.h;
         const s = this.scale;
 
-        // Base Center of the screen (Loom's Anchor)
         const cx = w * 0.5;
-        const cy = h * 0.5 + (40 * s); // Grounded slightly below true center
+        const cy = h * 0.5 + (40 * s); 
 
-        // --- Background & Echo Field ---
         const bgR = lerp(12, 22, this.presence);
         const bgG = lerp(10, 16, this.presence);
         const bgB = lerp(12, 15, this.presence);
@@ -228,13 +216,13 @@ class LoomPresence {
         this.ctx.fillStyle = bgGrad;
         this.ctx.fillRect(0, 0, w, h);
 
-        // --- Ecology ---
+
         this.motes.forEach(m => {
             m.update(this.time, 0.5, 0.5, this.phantoms, this.aspectRatio);
             m.draw(this.ctx, w, h, s, this.presence);
         });
 
-        // --- Loom Geometry (Fully Relative) ---
+
         const breathAmp = lerp(7, 14, this.presence) * s;
         const breathY = Math.sin(this.breathPhase) * breathAmp;
 
@@ -248,7 +236,7 @@ class LoomPresence {
             floorY: cy + (100 * s)
         };
 
-        // Shadow
+
         const shadowWidth = lerp(200, 350, this.presence) * s;
         const shadowGrad = this.ctx.createRadialGradient(cx, geom.floorY, 10 * s, cx, geom.floorY, shadowWidth);
         shadowGrad.addColorStop(0, `rgba(0,0,0,${lerp(0.4, 0.9, this.presence)})`);
@@ -256,7 +244,7 @@ class LoomPresence {
         this.ctx.fillStyle = shadowGrad;
         this.ctx.fillRect(0, geom.floorY - 100 * s, w, 200 * s);
 
-        // Body Mass
+
         const lR = lerp(100, 140, this.presence);
         const lG = lerp(85, 105, this.presence);
         const lB = lerp(95, 110, this.presence);
@@ -273,7 +261,7 @@ class LoomPresence {
         this.ctx.quadraticCurveTo(geom.tailX + 50 * s, geom.floorY, cx + 50 * s, geom.floorY);
         this.ctx.fill();
 
-        // Ear
+
         this.ctx.fillStyle = `rgb(${lR - 25}, ${lG - 20}, ${lB - 20})`;
         this.ctx.beginPath();
         this.ctx.moveTo(geom.headX + 10 * s, geom.headY - 60 * s);
@@ -281,12 +269,12 @@ class LoomPresence {
         this.ctx.quadraticCurveTo(geom.headX - 50 * s, geom.headY + 40 * s, geom.headX - 10 * s, geom.headY - 10 * s);
         this.ctx.fill();
 
-        // Vulnerable Eye
+
         const eyeX = geom.headX - 25 * s;
         const eyeY = geom.headY - 20 * s;
 
         this.ctx.strokeStyle = `rgb(${lR - 55}, ${lG - 45}, ${lB - 45})`;
-        this.ctx.lineWidth = 3 * Math.max(0.5, s); // Keep line readable
+        this.ctx.lineWidth = 3 * Math.max(0.5, s); 
 
         if (this.eyeOpenness < 0.02) {
             this.ctx.beginPath();
