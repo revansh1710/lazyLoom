@@ -1,4 +1,3 @@
-// --- Core Continuous Math ---
 function smoothNoise(t) { return (Math.sin(t) + Math.sin(t * 1.37) + Math.sin(t * 2.13)) / 3; }
 function lerp(start, end, amt) { return (1 - amt) * start + amt * end; }
 function smoothstep(min, max, value) {
@@ -6,62 +5,71 @@ function smoothstep(min, max, value) {
     return x * x * (3 - 2 * x);
 }
 
-// --- The Unseen (Phantom Nodes) ---
+// --- The Unseen (Normalized Phantom Nodes) ---
 class PhantomNode {
     constructor() {
-        this.x = 400;
-        this.y = 300;
+        this.nx = Math.random(); // Normalized X (0-1)
+        this.ny = Math.random(); // Normalized Y (0-1)
         this.warmth = 0;
         this.seedX = Math.random() * 100;
         this.seedY = Math.random() * 100;
     }
     update(t) {
-        const targetX = 400 + Math.sin(t * 0.02 + this.seedX) * 350;
-        const targetY = 300 + Math.cos(t * 0.015 + this.seedY) * 200;
+        // Drift softly within normalized space
+        const targetNX = 0.5 + Math.sin(t * 0.02 + this.seedX) * 0.4;
+        const targetNY = 0.5 + Math.cos(t * 0.015 + this.seedY) * 0.3;
 
-        this.x = lerp(this.x, targetX, 0.005);
-        this.y = lerp(this.y, targetY, 0.005);
-
-        // Warmth swells gently as it moves
+        this.nx = lerp(this.nx, targetNX, 0.005);
+        this.ny = lerp(this.ny, targetNY, 0.005);
         this.warmth = Math.pow((smoothNoise(t * 0.05) + 1) / 2, 2);
     }
 }
 
 // --- The Yielding Environment ---
 class Mote {
-    constructor(w, h) {
-        this.x = Math.random() * w;
-        this.y = h + Math.random() * 200;
+    constructor() {
+        this.nx = Math.random();
+        this.ny = 1.0 + Math.random() * 0.5;
         this.seed = Math.random() * 100;
-        this.size = Math.random() * 2.5 + 1.5;
-        this.baseSpeed = Math.random() * 0.3 + 0.1;
+        this.sizeBase = Math.random() * 2.5 + 1.0;
+        this.speedBase = Math.random() * 0.001 + 0.0005; // Normalized speed
     }
-    update(t, loomX, loomY, phantoms) {
-        const dLoom = Math.sqrt(Math.pow(this.x - loomX, 2) + Math.pow(this.y - loomY, 2));
-        let comfortMultiplier = smoothstep(0, 300, dLoom);
+    update(t, loomNX, loomNY, phantoms, aspectRatio) {
+        // Calculate distance in normalized space (adjusted for aspect ratio to keep gravity circular)
+        const dx = (this.nx - loomNX) * aspectRatio;
+        const dy = (this.ny - loomNY);
+        const dLoom = Math.sqrt(dx * dx + dy * dy);
 
-        let phantomPullX = 0;
+        let comfortMultiplier = smoothstep(0, 0.4, dLoom);
+        let phantomPullNX = 0;
+
         phantoms.forEach(p => {
-            const dPhantom = Math.sqrt(Math.pow(this.x - p.x, 2) + Math.pow(this.y - p.y, 2));
-            if (dPhantom < 150) {
+            const pdx = (this.nx - p.nx) * aspectRatio;
+            const pdy = (this.ny - p.ny);
+            const dPhantom = Math.sqrt(pdx * pdx + pdy * pdy);
+            if (dPhantom < 0.2) {
                 comfortMultiplier *= 0.5;
-                phantomPullX += (p.x - this.x) * 0.001 * p.warmth;
+                phantomPullNX += (p.nx - this.nx) * 0.01 * p.warmth;
             }
         });
 
-        const currentSpeed = this.baseSpeed * (0.1 + 0.9 * comfortMultiplier);
+        const currentSpeed = this.speedBase * (0.1 + 0.9 * comfortMultiplier);
 
-        this.y -= currentSpeed;
-        this.x += Math.sin(t * 0.5 + this.seed) * 0.3 + phantomPullX;
+        this.ny -= currentSpeed;
+        this.nx += Math.sin(t * 0.5 + this.seed) * 0.001 + phantomPullNX;
 
-        if (this.y < -50) {
-            this.y = 650;
-            this.x = Math.random() * 800;
+        if (this.ny < -0.1) {
+            this.ny = 1.1;
+            this.nx = Math.random();
         }
     }
-    draw(ctx, presence) {
+    draw(ctx, w, h, scale, presence) {
+        const px = this.nx * w;
+        const py = this.ny * h;
+        const pSize = this.sizeBase * (scale * 0.8); // Scale particles slightly, but keep them delicate
+
         ctx.beginPath();
-        ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+        ctx.arc(px, py, pSize, 0, Math.PI * 2);
         ctx.fillStyle = `rgba(255, 230, 200, ${0.1 + presence * 0.4})`;
         ctx.fill();
     }
@@ -78,75 +86,102 @@ class LoomPresence {
         this.lastFrameTime = performance.now();
         this.lastInteractionTime = performance.now();
 
-        this.mouseX = 400;
-        this.mouseY = 300;
+        // Input tracking
+        this.inputActive = false;
+        this.inputNX = 0.5;
+        this.inputNY = 0.5;
 
+        // Continuous state
         this.presence = 0;
         this.eyeOpenness = 0;
         this.gazeOffset = { x: 0, y: 0 };
 
         this.phantoms = [new PhantomNode(), new PhantomNode(), new PhantomNode()];
-        this.motes = Array.from({ length: 50 }, () => new Mote(this.canvas.width, this.canvas.height));
+        this.motes = [];
 
-        window.addEventListener('pointermove', (e) => {
-            const rect = this.canvas.getBoundingClientRect();
-            this.mouseX = e.clientX - rect.left;
-            this.mouseY = e.clientY - rect.top;
-            this.lastInteractionTime = performance.now();
-        });
+        this.handleResize();
+        window.addEventListener('resize', this.handleResize.bind(this));
+
+        // Universal pointer events (Mouse + Touch)
+        window.addEventListener('pointermove', this.handlePointer.bind(this));
+        window.addEventListener('pointerdown', this.handlePointer.bind(this));
+        window.addEventListener('pointerup', () => this.inputActive = false);
+        window.addEventListener('pointerleave', () => this.inputActive = false);
 
         requestAnimationFrame(this.loop.bind(this));
+    }
+
+    handleResize() {
+        this.w = window.innerWidth;
+        this.h = window.innerHeight;
+        this.canvas.width = this.w;
+        this.canvas.height = this.h;
+        this.aspectRatio = this.w / this.h;
+
+        // Scale factor: Base size is ~500px short-edge.
+        // On mobile, this makes Loom large and intimate. On desktop, it stabilizes.
+        this.scale = Math.min(this.w, this.h) / 500;
+
+        // Dynamic Ecology: Calculate desired mote density based on screen area
+        const area = this.w * this.h;
+        const targetMotes = Math.max(15, Math.min(80, Math.floor(area / 15000)));
+
+        // Softly grow or cull the ecosystem
+        if (this.motes.length < targetMotes) {
+            while (this.motes.length < targetMotes) this.motes.push(new Mote());
+        } else if (this.motes.length > targetMotes) {
+            this.motes.splice(targetMotes); // Instantly culling is okay off-screen, or we let them die. Simple cull for performance.
+        }
+    }
+
+    handlePointer(e) {
+        this.inputActive = true;
+        this.inputNX = e.clientX / this.w;
+        this.inputNY = e.clientY / this.h;
+        this.lastInteractionTime = performance.now();
     }
 
     updateCharacter(deltaTime, idleDuration) {
         this.presence = lerp(this.presence, idleDuration > 5 ? 1.0 : 0.0, idleDuration > 5 ? 0.002 : 0.05);
         this.phantoms.forEach(p => p.update(this.time));
 
-        // --- The Shared Breathing Field ---
-        const rawDoubt = Math.pow(Math.max(0, smoothNoise(this.time * 0.3)), 2);
-        const doubt = rawDoubt * (1 - this.presence * 0.8);
+        // Shared Breathing Field
+        const doubt = Math.pow(Math.max(0, smoothNoise(this.time * 0.3)), 2) * (1 - this.presence * 0.8);
         let breathSpeed = lerp(1.5, 0.6, this.presence);
-
-        const globalRhythmPhase = this.time * 0.65;
         const syncWindow = Math.pow(smoothNoise(this.time * 0.04), 4);
 
         if (syncWindow > 0.5) {
-            const phaseDiff = Math.sin(globalRhythmPhase) - Math.sin(this.breathPhase);
+            const phaseDiff = Math.sin(this.time * 0.65) - Math.sin(this.breathPhase);
             breathSpeed += phaseDiff * (syncWindow * 0.5);
         }
 
         this.breathPhase += deltaTime * breathSpeed * (1 - doubt * 0.9);
 
-        // --- Emotional Recognition & The Continuous Attention Field ---
+        // Emotional Recognition & Barycentric Attention
         const curiosity = Math.pow((Math.sin(this.time * 0.1) + Math.sin(this.time * 0.17)) * 0.5, 4);
         const stillnessSafety = smoothstep(8, 20, idleDuration);
-
         const awareness = curiosity * stillnessSafety * this.presence;
         this.eyeOpenness = lerp(this.eyeOpenness, Math.max(0, (awareness - 0.1) * 5), 0.02);
 
         if (this.eyeOpenness > 0.05) {
-            // ZERO LOGIC GATES. Pure Barycentric Gravity.
-            // The user always has a baseline gravitational pull of 1.0
-            let totalWeight = 1.0;
-            let weightedX = this.mouseX * 1.0;
-            let weightedY = this.mouseY * 1.0;
+            let totalWeight = this.inputActive ? 1.0 : 0.1; // User gravity fades if no touch/cursor
+            let weightedNX = this.inputNX * totalWeight;
+            let weightedNY = this.inputNY * totalWeight;
 
-            // Phantoms add their pull to the center of mass based purely on their warmth
             this.phantoms.forEach(p => {
-                // Squaring the warmth and multiplying makes the pull exponential but smooth
-                const phantomWeight = Math.pow(p.warmth, 2) * 2.5;
-                weightedX += p.x * phantomWeight;
-                weightedY += p.y * phantomWeight;
-                totalWeight += phantomWeight;
+                const pWeight = Math.pow(p.warmth, 2) * 3.0;
+                weightedNX += p.nx * pWeight;
+                weightedNY += p.ny * pWeight;
+                totalWeight += pWeight;
             });
 
-            // The final gaze is the continuous center of mass of the room
-            const targetX = weightedX / totalWeight;
-            const targetY = weightedY / totalWeight;
+            const targetNX = weightedNX / totalWeight;
+            const targetNY = weightedNY / totalWeight;
 
-            const targetGazeX = (targetX - 300) * 0.03;
-            const targetGazeY = (targetY - 350) * 0.03;
-            const shyOffsetX = smoothNoise(this.time * 0.5) * 5;
+            // Convert normalized target back to localized offsets for the eye
+            const targetGazeX = (targetNX - 0.5) * 40 * this.scale;
+            const targetGazeY = (targetNY - 0.5) * 40 * this.scale;
+            const shyOffsetX = smoothNoise(this.time * 0.5) * 8 * this.scale;
 
             this.gazeOffset.x = lerp(this.gazeOffset.x, targetGazeX + shyOffsetX, 0.03);
             this.gazeOffset.y = lerp(this.gazeOffset.y, targetGazeY, 0.03);
@@ -156,23 +191,29 @@ class LoomPresence {
         }
     }
 
-    render(geom) {
-        const w = this.canvas.width;
-        const h = this.canvas.height;
+    render() {
+        const w = this.w;
+        const h = this.h;
+        const s = this.scale;
 
-        // --- Background & Residual Warmth ---
+        // Base Center of the screen (Loom's Anchor)
+        const cx = w * 0.5;
+        const cy = h * 0.5 + (40 * s); // Grounded slightly below true center
+
+        // --- Background & Echo Field ---
         const bgR = lerp(12, 22, this.presence);
         const bgG = lerp(10, 16, this.presence);
         const bgB = lerp(12, 15, this.presence);
-
         this.ctx.fillStyle = `rgb(${bgR}, ${bgG}, ${bgB})`;
         this.ctx.fillRect(0, 0, w, h);
 
-        // Draw Phantom Warmth (Subtle, large gradients in the void)
         this.ctx.globalCompositeOperation = "screen";
         this.phantoms.forEach(p => {
-            if (p.warmth > 0.1) {
-                const echoGrad = this.ctx.createRadialGradient(p.x, p.y, 10, p.x, p.y, 250);
+            if (p.warmth > 0.05) {
+                const px = p.nx * w;
+                const py = p.ny * h;
+                const radius = 250 * s;
+                const echoGrad = this.ctx.createRadialGradient(px, py, 10 * s, px, py, radius);
                 echoGrad.addColorStop(0, `rgba(40, 25, 25, ${p.warmth * 0.15})`);
                 echoGrad.addColorStop(1, `rgba(0, 0, 0, 0)`);
                 this.ctx.fillStyle = echoGrad;
@@ -181,76 +222,90 @@ class LoomPresence {
         });
         this.ctx.globalCompositeOperation = "source-over";
 
-        // Base Vignette
-        const bgGrad = this.ctx.createRadialGradient(w / 2, h / 2 + 100, 100, w / 2, h / 2, 600);
+        const bgGrad = this.ctx.createRadialGradient(cx, cy, 100 * s, cx, cy, 600 * s);
         bgGrad.addColorStop(0, `rgba(0,0,0,0)`);
         bgGrad.addColorStop(1, `rgba(5, 4, 4, 0.9)`);
         this.ctx.fillStyle = bgGrad;
         this.ctx.fillRect(0, 0, w, h);
 
-        // Motes
+        // --- Ecology ---
         this.motes.forEach(m => {
-            m.update(this.time, geom.headX, geom.backY, this.phantoms);
-            m.draw(this.ctx, this.presence);
+            m.update(this.time, 0.5, 0.5, this.phantoms, this.aspectRatio);
+            m.draw(this.ctx, w, h, s, this.presence);
         });
 
-        // Loom Shadow
-        const shadowWidth = lerp(200, 350, this.presence);
-        const shadowGrad = this.ctx.createRadialGradient(geom.headX + 50, 520, 10, geom.headX + 50, 520, shadowWidth);
+        // --- Loom Geometry (Fully Relative) ---
+        const breathAmp = lerp(7, 14, this.presence) * s;
+        const breathY = Math.sin(this.breathPhase) * breathAmp;
+
+        const geom = {
+            headX: cx - (50 * s) + Math.cos(this.time * 0.1) * 4 * s,
+            headY: cy - (40 * s) + breathY * 0.4,
+            backY: cy - (60 * s) + breathY,
+            earY: cy - (80 * s) + Math.sin(this.time * 0.2) * 3 * s + (1 - this.presence) * 12 * s,
+            frontX: cx - (200 * s),
+            tailX: cx + (250 * s),
+            floorY: cy + (100 * s)
+        };
+
+        // Shadow
+        const shadowWidth = lerp(200, 350, this.presence) * s;
+        const shadowGrad = this.ctx.createRadialGradient(cx, geom.floorY, 10 * s, cx, geom.floorY, shadowWidth);
         shadowGrad.addColorStop(0, `rgba(0,0,0,${lerp(0.4, 0.9, this.presence)})`);
         shadowGrad.addColorStop(1, `rgba(0,0,0,0)`);
         this.ctx.fillStyle = shadowGrad;
-        this.ctx.fillRect(0, 400, w, 200);
+        this.ctx.fillRect(0, geom.floorY - 100 * s, w, 200 * s);
 
-        // --- Draw Loom ---
+        // Body Mass
         const lR = lerp(100, 140, this.presence);
         const lG = lerp(85, 105, this.presence);
         const lB = lerp(95, 110, this.presence);
 
-        const bodyGrad = this.ctx.createRadialGradient(geom.headX, geom.headY, 20, geom.headX + 150, geom.backY, 350);
+        const bodyGrad = this.ctx.createRadialGradient(geom.headX, geom.headY, 20 * s, geom.headX + 100 * s, geom.backY, 350 * s);
         bodyGrad.addColorStop(0, `rgb(${lR}, ${lG}, ${lB})`);
         bodyGrad.addColorStop(1, `rgb(${lR - 35}, ${lG - 25}, ${lB - 25})`);
 
         this.ctx.fillStyle = bodyGrad;
         this.ctx.beginPath();
-        this.ctx.moveTo(150, 520);
-        this.ctx.quadraticCurveTo(geom.headX - 90, geom.backY + 30, geom.headX, geom.backY - 40);
-        this.ctx.quadraticCurveTo(geom.headX + 200, geom.backY - 100, 600, geom.backY + 40);
-        this.ctx.quadraticCurveTo(650, 520, 550, 520);
+        this.ctx.moveTo(geom.frontX, geom.floorY);
+        this.ctx.quadraticCurveTo(geom.headX - 90 * s, geom.backY + 30 * s, geom.headX, geom.backY - 40 * s);
+        this.ctx.quadraticCurveTo(cx + 100 * s, geom.backY - 100 * s, geom.tailX, geom.backY + 40 * s);
+        this.ctx.quadraticCurveTo(geom.tailX + 50 * s, geom.floorY, cx + 50 * s, geom.floorY);
         this.ctx.fill();
 
+        // Ear
         this.ctx.fillStyle = `rgb(${lR - 25}, ${lG - 20}, ${lB - 20})`;
         this.ctx.beginPath();
-        this.ctx.moveTo(geom.headX + 10, geom.headY - 60);
-        this.ctx.quadraticCurveTo(geom.headX - 70, geom.earY - 10, geom.headX - 90, geom.earY + 50);
-        this.ctx.quadraticCurveTo(geom.headX - 50, geom.headY + 40, geom.headX - 10, geom.headY - 10);
+        this.ctx.moveTo(geom.headX + 10 * s, geom.headY - 60 * s);
+        this.ctx.quadraticCurveTo(geom.headX - 70 * s, geom.earY - 10 * s, geom.headX - 90 * s, geom.earY + 50 * s);
+        this.ctx.quadraticCurveTo(geom.headX - 50 * s, geom.headY + 40 * s, geom.headX - 10 * s, geom.headY - 10 * s);
         this.ctx.fill();
 
-        // --- The Eye ---
-        const eyeX = geom.headX - 25;
-        const eyeY = geom.headY - 20;
+        // Vulnerable Eye
+        const eyeX = geom.headX - 25 * s;
+        const eyeY = geom.headY - 20 * s;
 
         this.ctx.strokeStyle = `rgb(${lR - 55}, ${lG - 45}, ${lB - 45})`;
-        this.ctx.lineWidth = 3;
+        this.ctx.lineWidth = 3 * Math.max(0.5, s); // Keep line readable
 
         if (this.eyeOpenness < 0.02) {
             this.ctx.beginPath();
-            this.ctx.moveTo(eyeX - 15, eyeY);
-            this.ctx.quadraticCurveTo(eyeX, eyeY + 8, eyeX + 15, eyeY + 2);
+            this.ctx.moveTo(eyeX - 15 * s, eyeY);
+            this.ctx.quadraticCurveTo(eyeX, eyeY + 8 * s, eyeX + 15 * s, eyeY + 2 * s);
             this.ctx.stroke();
         } else {
-            const maxOpen = 7;
+            const maxOpen = 7 * s;
             const eyeHeight = maxOpen * Math.min(1, this.eyeOpenness);
 
             this.ctx.fillStyle = `rgba(255, 235, 200, ${Math.min(1, this.eyeOpenness * 1.5)})`;
             this.ctx.beginPath();
-            this.ctx.ellipse(eyeX, eyeY, 14, eyeHeight, 0, 0, Math.PI * 2);
+            this.ctx.ellipse(eyeX, eyeY, 14 * s, eyeHeight, 0, 0, Math.PI * 2);
             this.ctx.fill();
             this.ctx.stroke();
 
             this.ctx.fillStyle = "#151010";
             this.ctx.beginPath();
-            this.ctx.arc(eyeX + this.gazeOffset.x, eyeY + this.gazeOffset.y, 4, 0, Math.PI * 2);
+            this.ctx.arc(eyeX + this.gazeOffset.x, eyeY + this.gazeOffset.y, 4 * s, 0, Math.PI * 2);
             this.ctx.fill();
         }
     }
@@ -263,16 +318,7 @@ class LoomPresence {
         const idleDuration = (currentTime - this.lastInteractionTime) / 1000;
 
         this.updateCharacter(deltaTime, idleDuration);
-
-        const breathAmp = lerp(7, 14, this.presence);
-        const geom = {
-            backY: 420 + Math.sin(this.breathPhase) * breathAmp,
-            headX: 300 + Math.cos(this.time * 0.1) * 4,
-            headY: 440 + Math.sin(this.breathPhase) * (breathAmp * 0.4),
-            earY: 400 + Math.sin(this.time * 0.2) * 3 + (1 - this.presence) * 12
-        };
-
-        this.render(geom);
+        this.render();
 
         requestAnimationFrame(this.loop.bind(this));
     }
